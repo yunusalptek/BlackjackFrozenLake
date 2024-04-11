@@ -1,13 +1,4 @@
-# dealers without exceeding 21.
-#
-# **Actions**: Agents can pick between two actions:
-#  - stand (0): the player takes no more cards
-#  - hit (1): the player will be given another card, however the player could get over 21 and bust
-#
-# **Approach**: To solve this environment by yourself, you can pick your
-# favorite discrete RL algorithm. The presented solution uses *Q-learning*
-# (a model-free RL algorithm).
-#
+
 
 
 # %%
