@@ -1,10 +1,7 @@
 
 
 
-# %%
-# Imports and Environment Setup
-# ------------------------------
-#
+
 
 # Author: Till Zemann
 # License: MIT License
