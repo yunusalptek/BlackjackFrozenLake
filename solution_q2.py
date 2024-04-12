@@ -1,109 +1,102 @@
 import gymnasium as gym
 import numpy as np
-env = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=True,
-render_mode="human")
-# Your code for Q2.2 which Executes Random Policy until 1000 episodes
-# List to store training data
-training_data = []
 
-# Number of episodes
-num_episodes = 1000
+# Initialize environment
+env = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=True, render_mode="human")
 
-for _ in range(num_episodes):
-    # Reset the environment for a new episode
-    observation = env.reset()
-    done = False
+# Function to execute random policy for given episodes
+def execute_random_policy(env, episodes=10):
+    transitions = []  # List to store transitions (s, a, r, s', done)
     
-    while not done:
-        # Choose a random action
-        action = env.action_space.sample()
-        
-        # Take the action and observe the next state, reward, termination flag, and additional info
-        next_observation, reward, done, _ = env.step(action)
-        
-        # Record the transition (observation, action, next_observation) and reward
-        training_data.append((observation, action, next_observation, reward))
-        
-        observation = next_observation
-        
-        if done:
+    for episode in range(episodes):
+        state, info = env.reset()
+        #done = False
+        action = env.action_space.sample()  # Choose a random action
+        next_state, reward, terminated, truncated, info = env.step(action)
+        transitions.append((state, action, reward, next_state))
+        state = next_state
+
+        if terminated or truncated:
             break
-# Your code for Q2.3 which implements Value Iteration
-# Define the transition function T(s'|s, a) and reward function R(s, a, s') using the training data
-def transition_function(s_prime, s, a):
-    # Count occurrences of (s, a, s') in the training data
-    count = sum(1 for obs, act, next_obs, _ in training_data if obs == s and act == a and next_obs == s_prime)
-    # Count occurrences of (s, a) in the training data
-    total = sum(1 for obs, act, _, _ in training_data if obs == s and act == a)
-    # Calculate probability T(s'|s, a)
-    return count / total if total > 0 else 0
 
-def reward_function(s, a, s_prime):
-    # Find all transitions (s, a, s') in the training data
-    transitions = [(obs, act, next_obs, reward) for obs, act, next_obs, reward in training_data if obs == s and act == a and next_obs == s_prime]
-    # Calculate the total reward for transitions (s, a, s')
-    total_reward = sum(reward for _, _, _, reward in transitions)
-    # Calculate the average reward R(s, a, s')
-    return total_reward / len(transitions) if transitions else 0
+    return transitions
 
-# Discount factor
-gamma = 0.9
+# Collect training data
+training_data = execute_random_policy(env)
 
-# Number of iterations for value iteration
-num_iterations = 1000
+# Define functions to estimate transition and reward functions
+def estimate_functions(training_data, n_states, n_actions):
+    T_counts = np.zeros((n_states, n_actions, n_states))  # Transition counts
+    R_sums = np.zeros((n_states, n_actions, n_states))     # Sum of rewards
 
-# Initialize the value function arbitrarily
-num_states = 16  # Number of states in FrozenLake 4x4 grid
-V = np.zeros(num_states)
+    for transition in training_data:
+        s, a, r, s_prime = transition
+        T_counts[s, a, s_prime] += 1
+        R_sums[s, a, s_prime] += r
 
-# Value iteration algorithm
-for _ in range(num_iterations):
-    V_new = np.zeros(num_states)
-    for s in range(num_states):
-        max_value = float('-inf')
-        for a in range(4):  # 4 possible actions in FrozenLake environment
-            value = 0
-            for s_prime in range(num_states):
-                value += transition_function(s_prime, s, a) * (reward_function(s, a, s_prime) + gamma * V[s_prime])
-            max_value = max(max_value, value)
-        V_new[s] = max_value
-    V = V_new
-#Your code for Q2.4 which implements Policy Extraction
-# Initialize the policy
-policy = np.zeros(num_states, dtype=int)
+    # Normalize to get probabilities
+    T = T_counts / np.maximum(T_counts.sum(axis=2, keepdims=True), 1)
+    R = np.divide(R_sums, T_counts, out=np.zeros_like(R_sums), where=T_counts != 0)
 
-# Extract the optimal policy
-for s in range(num_states):
-    max_action = None
-    max_value = float('-inf')
-    for a in range(4):  # 4 possible actions in FrozenLake environment
-        value = 0
-        for s_prime in range(num_states):
-            value += transition_function(s_prime, s, a) * (reward_function(s, a, s_prime) + gamma * V[s_prime])
-        if value > max_value:
-            max_value = value
-            max_action = a
-    policy[s] = max_action
-# Your code for Q2.5 which executes the optimal policy
-# Extracted optimal policy
-policy = [1, 2, 1, 0, 1, 0, 2, 0, 2, 1, 1, 0, 1, 2, 2, 0]  # Example policy obtained from Q2.4
+    return T, R
 
-# Number of episodes
-num_episodes = 100
+# Get number of states and actions
+n_states = env.observation_space.n
+n_actions = env.action_space.n
 
-for _ in range(num_episodes):
-    # Reset the environment for a new episode
-    observation = env.reset()
-    done = False
+# Estimate transition and reward functions
+T_hat, R_hat = estimate_functions(training_data, n_states, n_actions)
+
+# Value Iteration to find optimal value function
+def value_iteration(T, R, gamma=0.99, epsilon=1e-6):
+    n_states, n_actions, _ = T.shape
+    V = np.zeros(n_states)
+
+    while True:
+        V_new = np.zeros_like(V)
+        for s in range(n_states):
+            V_new[s] = np.max(np.sum(T[s] * (R[s] + gamma * V), axis=1))
+        if np.max(np.abs(V - V_new)) < epsilon:
+            break
+        V = V_new
+
+    return V
+
+# Get optimal value function
+V_optimal = value_iteration(T_hat, R_hat)
+
+# Extract policy
+def extract_policy(V, T, R, gamma=0.99):
+    Q = np.zeros((V.shape[0], T.shape[1]))  # Initialize Q with the correct shape
+
+    for s in range(V.shape[0]):
+        for a in range(T.shape[1]):  # Use T.shape[1] to ensure correct indexing
+            Q[s, a] = np.sum(T[s, a, :] * (R[s, a, :] + gamma * V))
+
+    policy = np.argmax(Q, axis=1)
+    return policy
+
+optimal_policy = extract_policy(V_optimal, T_hat, R_hat)
+
+# Execute optimal policy
+def execute_optimal_policy(env, policy):
+    observation, info = env.reset()
+    total_reward = 0
+    #done = False
+    for _ in range(10):
+        if isinstance(observation, tuple):  # Check if observation is a tuple
+            observation = observation[0]  # Take the first element if it's a tuple
+        action = int(policy[observation])  # Convert observation to int
+        observation, reward, truncated, terminated, info = env.step(action)
+        total_reward += reward
     
-    while not done:
-        # Choose action based on the optimal policy
-        action = policy[observation]
-        
-        # Take the action and observe the next state, reward, termination flag, and additional info
-        next_observation, reward, done, _, = env.step(action)
-        
-        observation = next_observation
-        
-        if done:
+        if terminated or truncated:
             break
+        
+    return total_reward
+
+total_reward = execute_optimal_policy(env, optimal_policy)
+print("Total reward with optimal policy:", total_reward)
+
+# Close environment
+env.close()
