@@ -1,102 +1,152 @@
-import gymnasium as gym
 import numpy as np
+import gymnasium as gym
 
 # Initialize environment
-env = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=True, render_mode="human")
+env = gym.make("FrozenLake-v1", desc=None, map_name="4x4", render_mode="human", is_slippery=True)
 
-# Function to execute random policy for given episodes
-def execute_random_policy(env, episodes=10):
-    transitions = []  # List to store transitions (s, a, r, s', done)
-    
-    for episode in range(episodes):
-        state, info = env.reset()
-        #done = False
-        action = env.action_space.sample()  # Choose a random action
-        next_state, reward, terminated, truncated, info = env.step(action)
-        transitions.append((state, action, reward, next_state))
-        state = next_state
+# Initialize dictionaries to store counts
+transition_counts = {}  # Count of transitions (s, a) -> s'
+reward_counts = {}      # Count of rewards (s, a, s') -> r
+state_action_counts = {} # Count of state-action pairs
 
-        if terminated or truncated:
+# Execute random policy for 1000 episodes
+for _ in range(10):
+    state, info = env.reset()
+    #done = False
+    action = env.action_space.sample()  # Random action
+    next_state, reward, terminated, truncated, info = env.step(action)
+
+    # Update state-action counts
+    state_action_pair = (state, action)
+    if state_action_pair not in state_action_counts:
+        state_action_counts[state_action_pair] = 1
+    else:
+        state_action_counts[state_action_pair] += 1
+
+    # Update transition counts
+    if state_action_pair not in transition_counts:
+        transition_counts[state_action_pair] = {}
+    if next_state not in transition_counts[state_action_pair]:
+        transition_counts[state_action_pair][next_state] = 1
+    else:
+        transition_counts[state_action_pair][next_state] += 1
+
+    # Update reward counts
+    if state_action_pair not in reward_counts:
+        reward_counts[state_action_pair] = {}
+    if next_state not in reward_counts[state_action_pair]:
+        reward_counts[state_action_pair][next_state] = reward
+    else:
+        reward_counts[state_action_pair][next_state] += reward
+
+    state = next_state
+
+    if terminated or truncated:
+        break
+
+# Estimate transition function T(s'|s, a)
+transition_probabilities = {}
+for state_action_pair, transitions in transition_counts.items():
+    total_transitions = sum(transitions.values())
+    transition_probabilities[state_action_pair] = {next_state: count / total_transitions
+                                                    for next_state, count in transitions.items()}
+
+# Estimate reward function R(s, a, s')
+reward_function = {}
+for state_action_pair, rewards in reward_counts.items():
+    total_rewards = sum(rewards.values())
+    reward_function[state_action_pair] = {next_state: reward / count
+                                           for next_state, reward in rewards.items()
+                                           for next_state, count in transition_counts[state_action_pair].items()}
+
+# Print estimated transition function and reward function
+print("Estimated Transition Function:")
+for state_action_pair, transitions in transition_probabilities.items():
+    print(f"State-Action Pair: {state_action_pair}, Transitions: {transitions}")
+
+print("\nEstimated Reward Function:")
+for state_action_pair, rewards in reward_function.items():
+    print(f"State-Action Pair: {state_action_pair}, Rewards: {rewards}")
+
+def value_iteration(transition_probabilities, num_states, num_actions, gamma=0.99, max_iterations=1000, epsilon=1e-6):
+    # Initialize value function
+    V = np.zeros(num_states)
+
+    for _ in range(max_iterations):
+        prev_V = np.copy(V)
+        for state in range(num_states):
+            action_values = []
+            for action in range(num_actions):
+                if (state, action) in transition_probabilities:
+                    next_state = list(transition_probabilities[(state, action)].keys())[0]
+                    probability = transition_probabilities[(state, action)][next_state]
+                    try:
+                        action_value = probability * (gamma * prev_V[next_state])
+                        action_values.append(action_value)
+                    except:
+                        pass
+            if action_values:
+                V[state] = np.max(action_values)
+
+        if np.max(np.abs(V - prev_V)) < epsilon:
             break
-
-    return transitions
-
-# Collect training data
-training_data = execute_random_policy(env)
-
-# Define functions to estimate transition and reward functions
-def estimate_functions(training_data, n_states, n_actions):
-    T_counts = np.zeros((n_states, n_actions, n_states))  # Transition counts
-    R_sums = np.zeros((n_states, n_actions, n_states))     # Sum of rewards
-
-    for transition in training_data:
-        s, a, r, s_prime = transition
-        T_counts[s, a, s_prime] += 1
-        R_sums[s, a, s_prime] += r
-
-    # Normalize to get probabilities
-    T = T_counts / np.maximum(T_counts.sum(axis=2, keepdims=True), 1)
-    R = np.divide(R_sums, T_counts, out=np.zeros_like(R_sums), where=T_counts != 0)
-
-    return T, R
-
-# Get number of states and actions
-n_states = env.observation_space.n
-n_actions = env.action_space.n
-
-# Estimate transition and reward functions
-T_hat, R_hat = estimate_functions(training_data, n_states, n_actions)
-
-# Value Iteration to find optimal value function
-def value_iteration(T, R, gamma=0.99, epsilon=1e-6):
-    n_states, n_actions, _ = T.shape
-    V = np.zeros(n_states)
-
-    while True:
-        V_new = np.zeros_like(V)
-        for s in range(n_states):
-            V_new[s] = np.max(np.sum(T[s] * (R[s] + gamma * V), axis=1))
-        if np.max(np.abs(V - V_new)) < epsilon:
-            break
-        V = V_new
 
     return V
 
-# Get optimal value function
-V_optimal = value_iteration(T_hat, R_hat)
+# Number of states and actions
+num_states = len(set(s for s, _ in transition_probabilities.keys()))
+num_actions = env.action_space.n
 
-# Extract policy
-def extract_policy(V, T, R, gamma=0.99):
-    Q = np.zeros((V.shape[0], T.shape[1]))  # Initialize Q with the correct shape
+# Call the value iteration function
+optimal_value_function = value_iteration(transition_probabilities, num_states, num_actions)
 
-    for s in range(V.shape[0]):
-        for a in range(T.shape[1]):  # Use T.shape[1] to ensure correct indexing
-            Q[s, a] = np.sum(T[s, a, :] * (R[s, a, :] + gamma * V))
+# Print the optimal value function
+print("Optimal Value Function:")
+print(optimal_value_function)
 
-    policy = np.argmax(Q, axis=1)
+def extract_policy(value_function, transition_probabilities, num_states, num_actions, gamma=0.99):
+    policy = np.zeros(num_states, dtype=int)
+    for state in range(num_states):
+        action_values = np.zeros(num_actions)
+        for action in range(num_actions):
+            if (state, action) in transition_probabilities:
+                for next_state in transition_probabilities[(state, action)]:
+                    try:
+                        probability = transition_probabilities[(state, action)][next_state]
+                        reward = reward_function[(state, action)][next_state]
+                        action_values[action] += probability * (reward + gamma * value_function[next_state])
+                    except:
+                        pass
+        # Choose the action that maximizes the expected return
+        policy[state] = np.argmax(action_values)
     return policy
 
-optimal_policy = extract_policy(V_optimal, T_hat, R_hat)
+# Extract optimal policy
+optimal_policy = extract_policy(optimal_value_function, transition_probabilities, num_states, num_actions)
 
-# Execute optimal policy
-def execute_optimal_policy(env, policy):
-    observation, info = env.reset()
-    total_reward = 0
-    #done = False
-    for _ in range(10):
-        if isinstance(observation, tuple):  # Check if observation is a tuple
-            observation = observation[0]  # Take the first element if it's a tuple
-        action = int(policy[observation])  # Convert observation to int
-        observation, reward, truncated, terminated, info = env.step(action)
-        total_reward += reward
+# Print the optimal policy
+print("Optimal Policy:")
+print(optimal_policy)
+
+# Reset the environment
+observation, info = env.reset()
+
+# Act according to the optimal policy
+for _ in range(50):
+    # Select action according to the optimal policy
+    try:
+        action = optimal_policy[observation]
+    except:
+        pass    
     
-        if terminated or truncated:
-            break
-        
-    return total_reward
+    # Take action and observe the next state and reward
+    observation, reward, terminated, truncated, info = env.step(action)
+    
+    # Render the environment
+    env.render()
 
-total_reward = execute_optimal_policy(env, optimal_policy)
-print("Total reward with optimal policy:", total_reward)
+    if terminated or truncated:
+        print("Episode finished")
+        break
 
-# Close environment
 env.close()
