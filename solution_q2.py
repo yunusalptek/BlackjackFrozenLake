@@ -10,7 +10,7 @@ reward_counts = {}      # Count of rewards (s, a, s') -> r
 state_action_counts = {} # Count of state-action pairs
 
 # Execute random policy for 1000 episodes
-for _ in range(10):
+for _ in range(1000):
     state, info = env.reset()
     #done = False
     action = env.action_space.sample()  # Random action
